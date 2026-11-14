@@ -100,9 +100,23 @@ jobs:
           ls -l out
           sha256sum out/*.ipk
 
-      - name: Upload artifact
+      - name: Upload luci-app-watchcat
         uses: actions/upload-artifact@v4
         with:
-          name: luci-watchcat-ipks
-          path: out/*.ipk
+          name: luci-app-watchcat
+          path: out/luci-app-watchcat_*.ipk
+          if-no-files-found: error
+
+      - name: Upload luci-i18n-watchcat-zh-cn
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-i18n-watchcat-zh-cn
+          path: out/luci-i18n-watchcat-zh-cn_*.ipk
+          if-no-files-found: error
+
+      - name: Upload luci-i18n-watchcat-zh-tw
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-i18n-watchcat-zh-tw
+          path: out/luci-i18n-watchcat-zh-tw_*.ipk
           if-no-files-found: error
