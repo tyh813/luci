@@ -28,14 +28,17 @@ jobs:
           PO2LMO=$(find . -name po2lmo.c | head -n1)
           test -n "$PO2LMO" || { echo "ERROR: po2lmo.c not found"; exit 1; }
           SRC_DIR=$(dirname "$PO2LMO")
-          # sfh_hash (SuperFastHash) is defined in a separate translation unit.
-          # Must link luci's own implementation so catalog keys match the runtime.
-          SFH=$(grep -rlE '^[[:alnum:]_ *]*sfh_hash[[:space:]]*\(' --include='*.c' modules/luci-base 2>/dev/null | grep -v 'po2lmo\.c' | head -n1 || true)
-          [ -n "$SFH" ] || SFH=$(grep -rlE '^[[:alnum:]_ *]*sfh_hash[[:space:]]*\(' --include='*.c' . | grep -v 'po2lmo\.c' | head -n1 || true)
-          test -n "$SFH" || { echo "ERROR: sfh_hash definition not found"; exit 1; }
-          echo "po2lmo:   $PO2LMO"
-          echo "sfh_hash: $SFH"
-          gcc -O2 -I"$SRC_DIR" -I"$(dirname "$SFH")" -o /tmp/po2lmo "$PO2LMO" "$SFH"
+          # sfh_hash (SuperFastHash) lives in lib/lmo.c, which includes
+          # plural_formula.h -- that header is lemon-generated from
+          # lib/plural_formula.y at build time. Mirror upstream
+          # modules/luci-base/src/Makefile:
+          #   po2lmo: po2lmo.o lib/lmo.o lib/plural_formula.o
+          # lemon must live in contrib/ : at runtime it looks for lempar.c
+          # next to argv[0] (tplt_open -> pathsearch), same as upstream.
+          cc -std=gnu17 -o "$SRC_DIR/contrib/lemon" "$SRC_DIR/contrib/lemon.c"
+          ( cd "$SRC_DIR" && ./contrib/lemon -q lib/plural_formula.y )
+          gcc -O2 -I"$SRC_DIR" -I"$SRC_DIR/lib" -o /tmp/po2lmo \
+            "$PO2LMO" "$SRC_DIR/lib/lmo.c" "$SRC_DIR/lib/plural_formula.c"
           test -x /tmp/po2lmo || { echo "ERROR: po2lmo build failed"; exit 1; }
 
       - name: Package app + zh-cn/zh-tw ipks
@@ -77,10 +80,13 @@ jobs:
           make_ipk "luci-app-watchcat" "$VER" "luci-base, watchcat" \
             "app_data" "$PWD/out/luci-app-watchcat_${VER}_all.ipk"
 
+          # po/ dirs are zh_Hans / zh_Hant. LuCI loads watchcat.zh-cn.lmo /
+          # watchcat.zh-tw.lmo (luci.mk LUCI_LC_ALIAS), so the output name stays
+          # zh-cn / zh-tw - only the source glob had to change.
           for lang in zh-cn zh-tw; do
             case "$lang" in
-              zh-cn) PO="$(find "$APP/po" -type f -name '*.po' -path '*zh*cn*' | head -n1)";;
-              zh-tw) PO="$(find "$APP/po" -type f -name '*.po' -path '*zh*tw*' | head -n1)";;
+              zh-cn) PO="$(find "$APP/po" -type f -name '*.po' -path '*zh_Hans*' | head -n1)";;
+              zh-tw) PO="$(find "$APP/po" -type f -name '*.po' -path '*zh_Hant*' | head -n1)";;
             esac
             test -n "$PO" || { echo "ERROR: no .po for $lang"; exit 1; }
             echo "using po: $PO"
