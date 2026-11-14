@@ -2,33 +2,47 @@ name: Build LuCI Watchcat ipks
 
 on:
   workflow_dispatch:
+  # schedule:
+  #   - cron: '0 3 * * 1'
 
 permissions:
   contents: read
 
 jobs:
-  luci:
+  build:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Checkout this repo (openwrt/luci fork)
+      - name: Checkout this repo
         uses: actions/checkout@v5
 
       - name: Prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential file curl git
+          gcc --version | head -n1
 
       - name: Build po2lmo host tool
         run: |
-          SRC=$(find modules/luci-base -name po2lmo.c | head -n1)
-          test -n "$SRC" || { echo "ERROR: po2lmo.c not found"; exit 1; }
-          gcc -O2 -o /tmp/po2lmo "$SRC"
+          set -e
+          PO2LMO=$(find . -name po2lmo.c | head -n1)
+          test -n "$PO2LMO" || { echo "ERROR: po2lmo.c not found"; exit 1; }
+          SRC_DIR=$(dirname "$PO2LMO")
+          # sfh_hash (SuperFastHash) is defined in a separate translation unit.
+          # Must link luci's own implementation so catalog keys match the runtime.
+          SFH=$(grep -rlE '^[[:alnum:]_ *]*sfh_hash[[:space:]]*\(' --include='*.c' modules/luci-base 2>/dev/null | grep -v 'po2lmo\.c' | head -n1 || true)
+          [ -n "$SFH" ] || SFH=$(grep -rlE '^[[:alnum:]_ *]*sfh_hash[[:space:]]*\(' --include='*.c' . | grep -v 'po2lmo\.c' | head -n1 || true)
+          test -n "$SFH" || { echo "ERROR: sfh_hash definition not found"; exit 1; }
+          echo "po2lmo:   $PO2LMO"
+          echo "sfh_hash: $SFH"
+          gcc -O2 -I"$SRC_DIR" -I"$(dirname "$SFH")" -o /tmp/po2lmo "$PO2LMO" "$SFH"
+          test -x /tmp/po2lmo || { echo "ERROR: po2lmo build failed"; exit 1; }
 
       - name: Package app + zh-cn/zh-tw ipks
         run: |
           set -e
           APP="applications/luci-app-watchcat"
+          test -d "$APP" || { echo "ERROR: $APP missing"; exit 1; }
           VER="git-$(git show -s --format=%cd --date=format:%y.%j HEAD)-$(git rev-parse --short HEAD)"
           mkdir -p out
 
@@ -43,7 +57,7 @@ jobs:
               printf 'Section: luci\n'
               printf 'Priority: optional\n'
               printf 'Depends: %s\n' "$deps"
-              printf 'Description: LuCI Watchcat (openwrt/luci fork)\n'
+              printf 'Description: LuCI Watchcat (built from openwrt/luci fork)\n'
             } > "$tmp/ctrl/control"
             ( cd "$data" && tar czf "$tmp/data.tar.gz" . )
             ( cd "$tmp/ctrl" && tar czf "$tmp/control.tar.gz" . )
@@ -69,18 +83,20 @@ jobs:
               zh-tw) PO="$(find "$APP/po" -type f -name '*.po' -path '*zh*tw*' | head -n1)";;
             esac
             test -n "$PO" || { echo "ERROR: no .po for $lang"; exit 1; }
-            mkdir -p i18n_data/usr/lib/lua/luci/i18n
+            echo "using po: $PO"
+            mkdir -p "i18n_data/usr/lib/lua/luci/i18n"
             /tmp/po2lmo "$PO" "i18n_data/usr/lib/lua/luci/i18n/watchcat.${lang}.lmo"
             make_ipk "luci-i18n-watchcat-${lang}" "$VER" "luci-app-watchcat" \
               "i18n_data" "$PWD/out/luci-i18n-watchcat-${lang}_${VER}_all.ipk"
             rm -rf i18n_data
           done
+
           ls -l out
           sha256sum out/*.ipk
 
-      - name: Upload LuCI ipks
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: luci-ipks
+          name: luci-watchcat-ipks
           path: out/*.ipk
           if-no-files-found: error
